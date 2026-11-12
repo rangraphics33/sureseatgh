@@ -3,8 +3,7 @@ export type Route = {
   name: string
   via: string
   stops: string[]
-  segmentFares?: (number | null)[]
-  fullRouteFare?: number | null
+  standardFare?: number | null
   published?: boolean
 }
 
@@ -28,8 +27,7 @@ export const initialRoutes: Route[] = [
       'Paloma', 'Equip', 'Circle Overhead', 'Commercial Bank', 'PTC', 'Curve',
       'Odorna / Circle',
     ],
-    segmentFares: Array(57).fill(1),
-    fullRouteFare: 57,
+    standardFare: 57,
     published: true,
   },
   {
@@ -47,8 +45,7 @@ export const initialRoutes: Route[] = [
       'GBC', 'Mobil', 'Nima Junction', 'Paloma', 'Equip', 'Circle Overhead',
       'Commercial Bank', 'PTC', 'Curve', 'Odorna / Circle',
     ],
-    segmentFares: Array(45).fill(1),
-    fullRouteFare: 45,
+    standardFare: 45,
     published: true,
   },
 ]

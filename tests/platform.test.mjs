@@ -128,9 +128,10 @@ test('preview booking holds remain pending, unpaid, and idempotent', async () =>
   }
   const first = await previewPlatformService.createBooking(request)
   const repeated = await previewPlatformService.createBooking(request)
+  const route = initialRoutes.find((item) => item.id === request.routeId)
 
   assert.equal(first.status, 'pending_payment')
-  assert.equal(first.totalFare, 1)
+  assert.equal(first.totalFare, route?.standardFare)
   assert.equal(first.id, repeated.id)
   assert.notEqual(first.status, 'confirmed')
 })

@@ -22,10 +22,10 @@
 | GET | `/v1/routes?status=published&page=&pageSize=` | Published routes and ordered stops with pricing |
 | GET | `/v1/admin/routes?page=&pageSize=` | Admin route list, including drafts |
 | POST | `/v1/admin/routes` | Create route |
-| PATCH | `/v1/admin/routes/{routeId}` | Update route, stops, segment fares, or publication state |
+| PATCH | `/v1/admin/routes/{routeId}` | Update route, ordered stops, standard fare, or publication state |
 | POST | `/v1/admin/routes/{routeId}/publish` | Validate fare reconciliation and publish |
 
-A route includes `id`, `name`, `via`, ordered `stops`, `segmentFares`, `fullRouteFare`, `published`, and `updatedAt`. The server validates that each adjacent fare is non-negative and the segment total equals the full-route fare. Passenger fare is calculated from the selected adjacent segments by the server and returned as an authoritative quote.
+A route includes `id`, `name`, `via`, ordered `stops`, `standardFare`, `published`, and `updatedAt`. Every valid pickup/drop-off pair on that route costs the same standard fare. The server reads that fare from the published route, stores the fare snapshot on the booking, and returns it as the authoritative quote. Pickup and drop-off indexes still determine route order, seat occupancy, and the driver's manifest; they do not change price. The database retains the existing `full_route_fare` column and `p_full_route_fare` RPC argument for compatibility, but they represent the standard one-way route fare after migration `20261112030000_transport_standard_route_fares.sql`.
 
 ## Ride search and bookings
 

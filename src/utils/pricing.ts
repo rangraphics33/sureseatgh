@@ -6,11 +6,7 @@ export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface RoutePricingStatus {
   valid: boolean
-  segmentCount: number
-  configuredSegments: number
-  segmentTotal: number
-  fullRouteFare: number | null
-  remaining: number | null
+  standardFare: number | null
   message: string
 }
 
@@ -80,27 +76,15 @@ function isCurrencyValue(value: unknown): value is number {
 }
 
 export function getRoutePricingStatus(route: Route): RoutePricingStatus {
-  const segmentCount = Math.max(0, route.stops.length - 1)
-  const fares = route.segmentFares ?? []
-  const configuredSegments = fares.filter(isCurrencyValue).length
-  const segmentTotal = roundMoney(fares.reduce<number>((sum, fare) => sum + (isCurrencyValue(fare) ? fare : 0), 0))
-  const fullRouteFare = route.fullRouteFare
-  const remaining = isCurrencyValue(fullRouteFare) ? roundMoney(fullRouteFare - segmentTotal) : null
-  let message = 'Pricing is valid.'
-
-  if (route.stops.length < 2) message = 'Add at least two stops.'
-  else if (fares.length !== segmentCount || configuredSegments !== segmentCount) message = 'Configure a valid fare for every consecutive stop pair.'
-  else if (!isCurrencyValue(fullRouteFare)) message = 'Set the full-route fare target.'
-  else if (remaining !== 0) message = 'Segment fares must equal the full-route fare.'
-
+  const standardFare = route.standardFare
+  const fareIsValid = isCurrencyValue(standardFare) && standardFare > 0
+  const valid = route.stops.length >= 2 && fareIsValid
   return {
-    valid: route.stops.length >= 2 && fares.length === segmentCount && configuredSegments === segmentCount && remaining === 0,
-    segmentCount,
-    configuredSegments,
-    segmentTotal,
-    fullRouteFare: isCurrencyValue(fullRouteFare) ? fullRouteFare : null,
-    remaining,
-    message,
+    valid,
+    standardFare: fareIsValid ? standardFare : null,
+    message: route.stops.length < 2
+      ? 'Add at least two stops.'
+      : fareIsValid ? 'Standard route fare is set.' : 'Set a standard route fare greater than zero.',
   }
 }
 
@@ -112,14 +96,7 @@ export function getJourneyFare(route: Route, pickupIndex: number, dropoffIndex: 
     || dropoffIndex <= pickupIndex
     || dropoffIndex >= route.stops.length) return null
 
-  const fares = route.segmentFares ?? []
-  let cents = 0
-  for (let index = pickupIndex; index < dropoffIndex; index += 1) {
-    const fare = fares[index]
-    if (!isCurrencyValue(fare)) return null
-    cents += Math.round(fare * 100)
-  }
-  return roundMoney(cents / 100)
+  return route.standardFare ?? null
 }
 
 export function formatGhs(value: number) {
@@ -242,7 +219,7 @@ export function getSubscriptionQuote(input: SubscriptionQuoteInput): Subscriptio
   return {
     ...schedule,
     valid,
-    error: schedule.error ?? (journeyFare === null ? 'Choose a valid route with complete segment pricing and a destination after pickup.' : null),
+    error: schedule.error ?? (journeyFare === null ? 'Choose a route with a standard fare and a destination after pickup.' : null),
     journeyFare,
     journeys,
     baseTotal,
@@ -307,12 +284,9 @@ export function applyPaidRouteChange<T extends PaidRouteChangeState>(
 }
 
 export function addRouteStop(route: Route, stop: string): Route {
-  const existingSegmentCount = Math.max(0, route.stops.length - 1)
-  const segmentFares = Array.from({ length: existingSegmentCount }, (_, index) => route.segmentFares?.[index] ?? null)
   return {
     ...route,
     stops: [...route.stops, stop],
-    segmentFares: [...segmentFares, ...(route.stops.length ? [null] : [])],
     published: false,
   }
 }
@@ -322,12 +296,7 @@ export function removeRouteStop(route: Route, stopIndex: number): Route {
     throw new RangeError('Stop index is outside the route.')
   }
   const stops = route.stops.filter((_, index) => index !== stopIndex)
-  const segmentFares = stops.slice(1).map((_, newIndex) => {
-    if (newIndex === stopIndex - 1) return null
-    const oldSegmentIndex = newIndex < stopIndex ? newIndex : newIndex + 1
-    return route.segmentFares?.[oldSegmentIndex] ?? null
-  })
-  return { ...route, stops, segmentFares, published: false }
+  return { ...route, stops, published: false }
 }
 
 export function reorderRouteStop(route: Route, stopIndex: number, direction: -1 | 1): Route {
@@ -341,7 +310,6 @@ export function reorderRouteStop(route: Route, stopIndex: number, direction: -1 
   return {
     ...route,
     stops,
-    segmentFares: Array(Math.max(0, stops.length - 1)).fill(null),
     published: false,
   }
 }

@@ -1,4 +1,5 @@
 import type { Route } from '../data/routes.ts'
+import { initialRoutes } from '../data/routes.ts'
 import { getSupabaseClient } from './supabaseClient.ts'
 
 type RouteRow = {
@@ -10,9 +11,7 @@ type RouteRow = {
 }
 
 type StopRow = { route_id: string; stop_index: number; stop_name: string }
-type FareRow = { route_id: string; from_stop_index: number; fare: number | string }
-
-export type SaveTransportRouteInput = Pick<Route, 'name' | 'via' | 'stops' | 'segmentFares' | 'fullRouteFare'> & {
+export type SaveTransportRouteInput = Pick<Route, 'name' | 'via' | 'stops' | 'standardFare'> & {
   id?: string
   publish: boolean
 }
@@ -33,12 +32,10 @@ export async function getTransportRoutes(): Promise<Route[]> {
   if (!rows.length) return []
 
   const ids = rows.map((row) => row.id)
-  const [stopsResult, faresResult] = await Promise.all([
+  const [stopsResult] = await Promise.all([
     client.from('transport_route_stops').select('route_id,stop_index,stop_name').in('route_id', ids).order('stop_index'),
-    client.from('transport_route_segment_fares').select('route_id,from_stop_index,fare').in('route_id', ids).order('from_stop_index'),
   ])
   throwIfError(stopsResult.error)
-  throwIfError(faresResult.error)
 
   const stopsByRoute = new Map<string, StopRow[]>()
   for (const stop of (stopsResult.data ?? []) as StopRow[]) {
@@ -46,26 +43,15 @@ export async function getTransportRoutes(): Promise<Route[]> {
     list.push(stop)
     stopsByRoute.set(stop.route_id, list)
   }
-  const faresByRoute = new Map<string, FareRow[]>()
-  for (const fare of (faresResult.data ?? []) as FareRow[]) {
-    const list = faresByRoute.get(fare.route_id) ?? []
-    list.push(fare)
-    faresByRoute.set(fare.route_id, list)
-  }
-
   return rows.map((row) => {
     const stops = stopsByRoute.get(row.id) ?? []
-    const fares = faresByRoute.get(row.id) ?? []
+    const storedFare = Number(row.full_route_fare)
     return {
       id: row.id,
       name: row.name,
       via: row.via,
       stops: stops.map((stop) => stop.stop_name),
-      segmentFares: Array.from({ length: Math.max(0, stops.length - 1) }, (_, index) => {
-        const fare = fares.find((item) => item.from_stop_index === index)
-        return fare ? Number(fare.fare) : null
-      }),
-      fullRouteFare: Number(row.full_route_fare),
+      standardFare: storedFare > 0 ? storedFare : null,
       published: row.status === 'published',
     }
   })
@@ -77,12 +63,40 @@ export async function saveTransportRoute(input: SaveTransportRouteInput): Promis
     p_route_id: input.id && !input.id.startsWith('draft-route-') ? input.id : null,
     p_name: input.name.trim(),
     p_via: input.via.trim(),
-    p_full_route_fare: input.fullRouteFare ?? 0,
+    p_full_route_fare: input.standardFare ?? 0,
     p_stops: input.stops,
-    p_segment_fares: input.segmentFares ?? [],
+    // Kept for the current RPC signature; the standard-fare migration ignores it.
+    p_segment_fares: Array.from({ length: Math.max(0, input.stops.length - 1) }, () => null),
     p_publish: input.publish,
   })
   throwIfError(error)
   if (typeof data !== 'string') throw new Error('Route save returned an invalid route identifier.')
   return data
+}
+
+export async function ensureStarterTransportRoutes(): Promise<{ routes: Route[]; addedCount: number }> {
+  const currentRoutes = await getTransportRoutes()
+  let addedCount = 0
+
+  for (const starter of initialRoutes) {
+    const existing = currentRoutes.find((route) => (
+      route.name.trim().toLowerCase() === starter.name.trim().toLowerCase()
+      && route.via.trim().toLowerCase() === starter.via.trim().toLowerCase()
+    ))
+    if (existing?.stops.length) continue
+
+    await saveTransportRoute({
+      ...(existing ? { id: existing.id } : {}),
+      name: starter.name,
+      via: starter.via,
+      stops: [...starter.stops],
+      // Preview prices are never copied into Supabase. An administrator enters
+      // the approved standard fare before publishing.
+      standardFare: existing?.standardFare ?? null,
+      publish: false,
+    })
+    addedCount += 1
+  }
+
+  return { routes: await getTransportRoutes(), addedCount }
 }

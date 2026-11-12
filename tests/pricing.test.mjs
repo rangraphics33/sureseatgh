@@ -21,33 +21,30 @@ const route = {
   name: 'Point A → Point E',
   via: 'Sample',
   stops: ['Point A', 'Point B', 'Point C', 'Point D', 'Point E'],
-  segmentFares: [6, 3, 3, 3],
-  fullRouteFare: 15,
+  standardFare: 15,
   published: true,
 }
 
-test('configured sample routes have a fare for every adjacent pair and a reconciled target', () => {
+test('configured sample routes have one positive standard fare', () => {
   for (const sampleRoute of initialRoutes) {
-    assert.equal(sampleRoute.segmentFares?.length, sampleRoute.stops.length - 1)
+    assert.ok(sampleRoute.standardFare > 0)
     assert.equal(getRoutePricingStatus(sampleRoute).valid, true)
   }
 })
 
-test('segment fares sum only the adjacent journey segments', () => {
+test('every valid pickup and drop-off pair on the route pays the same fare', () => {
   assert.equal(getJourneyFare(route, 0, 4), 15)
-  assert.equal(getJourneyFare(route, 1, 3), 6)
+  assert.equal(getJourneyFare(route, 1, 3), 15)
   assert.equal(getJourneyFare(route, 2, 2), null)
   assert.equal(getJourneyFare(route, -1, 2), null)
-  assert.equal(getJourneyFare({ ...route, segmentFares: [6, null, 3, 3] }, 0, 3), null)
 })
 
-test('route pricing requires one valid fare per adjacent stop and a matching full fare', () => {
+test('route publication requires two stops and a positive currency fare', () => {
   assert.equal(getRoutePricingStatus(route).valid, true)
-  assert.equal(getRoutePricingStatus({ ...route, fullRouteFare: 16 }).valid, false)
-  assert.equal(getRoutePricingStatus({ ...route, segmentFares: [6, 3, 3] }).valid, false)
-  assert.equal(getRoutePricingStatus({ ...route, segmentFares: [6, -1, 3, 7] }).valid, false)
-  assert.equal(getRoutePricingStatus({ ...route, segmentFares: [6.001, 3, 3, 3] }).valid, false)
-  assert.equal(getRoutePricingStatus({ ...route, fullRouteFare: null }).valid, false)
+  assert.equal(getRoutePricingStatus({ ...route, standardFare: 0 }).valid, false)
+  assert.equal(getRoutePricingStatus({ ...route, standardFare: 6.001 }).valid, false)
+  assert.equal(getRoutePricingStatus({ ...route, standardFare: null }).valid, false)
+  assert.equal(getRoutePricingStatus({ ...route, stops: ['Only stop'] }).valid, false)
 })
 
 test('daily, weekly and monthly package quotes use the configured journey frequency', () => {
@@ -60,12 +57,12 @@ test('daily, weekly and monthly package quotes use the configured journey freque
   assert.equal(weekly.eligibleDays, 5)
   assert.equal(weekly.journeys, 10)
   assert.deepEqual(weekly.serviceDates, ['2026-11-11', '2026-11-12', '2026-11-13', '2026-11-16', '2026-11-17'])
-  assert.equal(weekly.baseTotal, 60)
-  assert.equal(weekly.total, 60)
+  assert.equal(weekly.baseTotal, 150)
+  assert.equal(weekly.total, 150)
 
   const monthly = getSubscriptionQuote({ ...base, period: 'monthly', direction: 'evening' })
   assert.equal(monthly.eligibleDays, monthly.journeys)
-  assert.equal(monthly.total, monthly.journeys * 6)
+  assert.equal(monthly.total, monthly.journeys * 15)
 })
 
 test('monthly period end clamps month-end and leap-year anniversaries', () => {
@@ -145,14 +142,14 @@ test('a verified payment applies a route change once and adds only the due amoun
   assert.deepEqual(result.subscription, { routeId: 'new', pickupIndex: 2, dropoffIndex: 4, totalPaid: 69 })
 })
 
-test('adding, removing and reordering stops preserve or invalidate the correct segment fares', () => {
-  const base = { ...route, stops: ['A', 'B', 'C', 'D'], segmentFares: [2, 3, 4] }
-  assert.deepEqual(addRouteStop(base, 'E').segmentFares, [2, 3, 4, null])
-  assert.deepEqual(removeRouteStop(base, 1).segmentFares, [null, 4])
-  assert.deepEqual(removeRouteStop(base, 0).segmentFares, [3, 4])
-  assert.deepEqual(removeRouteStop(base, 3).segmentFares, [2, 3])
+test('adding, removing and reordering stops preserve the standard fare and unpublish the route', () => {
+  const base = { ...route, stops: ['A', 'B', 'C', 'D'] }
+  assert.equal(addRouteStop(base, 'E').standardFare, 15)
+  assert.equal(removeRouteStop(base, 1).standardFare, 15)
+  assert.equal(removeRouteStop(base, 0).standardFare, 15)
+  assert.equal(removeRouteStop(base, 3).standardFare, 15)
   const reordered = reorderRouteStop(base, 1, 1)
   assert.deepEqual(reordered.stops, ['A', 'C', 'B', 'D'])
-  assert.deepEqual(reordered.segmentFares, [null, null, null])
+  assert.equal(reordered.standardFare, 15)
   assert.equal(reordered.published, false)
 })

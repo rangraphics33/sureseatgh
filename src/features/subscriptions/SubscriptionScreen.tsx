@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, CalendarDays, CheckCircle2, CreditCard, MapPin, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import type { Route } from '../../data/routes'
-import { isPreviewMode, platformService } from '../../services/platform'
+import { platformService } from '../../services/platform'
 import {
   applyPaidRouteChange,
   formatGhs,
@@ -54,6 +54,7 @@ type Props = {
   onSnapshotChange: (snapshot: SubscriptionSnapshot) => void
   onToast: (message: string) => void
   allowChanges?: boolean
+  isPreviewMode: boolean
 }
 
 type PendingRouteChange = {
@@ -83,7 +84,7 @@ function isPaymentStatus(value: string): value is PaymentStatus {
   return value === 'pending' || value === 'succeeded' || value === 'failed' || value === 'cancelled'
 }
 
-export default function SubscriptionScreen({ routes, initialSnapshot, onSnapshotChange, onToast, allowChanges = true }: Props) {
+export default function SubscriptionScreen({ routes, initialSnapshot, onSnapshotChange, onToast, allowChanges = true, isPreviewMode }: Props) {
   const availableRoutes = useMemo(
     () => routes.filter((route) => route.published && getRoutePricingStatus(route).valid),
     [routes],
@@ -572,7 +573,7 @@ export default function SubscriptionScreen({ routes, initialSnapshot, onSnapshot
           {!paymentError && paymentStatus === 'pending' && pendingChange && <p className="payment-result pending" role="status">Payment is not confirmed yet. The original route remains active.</p>}
           {paymentError && <p className="payment-result failed" role="alert">{paymentError}</p>}
           <p className="preview-note">{isPreviewMode
-            ? 'Sample segment fares are illustrative only. Package calculations are for preview; payment confirmation, entitlement and route changes must be verified by the future backend.'
+            ? 'Sample standard route fares are illustrative only. Package calculations are for preview; payment confirmation, entitlement and route changes must be verified by the backend.'
             : 'Subscription state, purchase, payment, and route changes are not connected in API mode. No subscription changes can be made from this screen.'}</p>
         </section>
 
