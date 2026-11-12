@@ -64,4 +64,21 @@ export const transportDepartureService = {
     if (typeof data !== 'string') throw new Error('Could not save departure: the database returned no ID.')
     return data
   },
+
+  async reschedule(input: {
+    departureId: string
+    travelDate: string
+    departureTime: string
+    driverUserId: string
+    vehicleId: string
+  }): Promise<void> {
+    const { error } = await getSupabaseClient().rpc('admin_reschedule_transport_departure', {
+      p_departure_id: input.departureId,
+      p_travel_date: input.travelDate,
+      p_departure_time: input.departureTime,
+      p_driver_user_id: input.driverUserId,
+      p_vehicle_id: input.vehicleId,
+    })
+    throwOnError(error, 'Could not reschedule departure')
+  },
 }

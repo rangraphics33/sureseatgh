@@ -46,6 +46,7 @@ export interface BookingRecord {
   vehicle: string
   driver: string
   totalFare: number
+  journeyStatus?: 'not_boarded' | 'boarded' | 'completion_requested' | 'completed'
   createdAt: string
 }
 

@@ -9,6 +9,7 @@ interface DepartureSearchRow {
   driver: string
   available_seats: number
   fare: number | string
+  journey_status?: BookingRecord['journeyStatus']
 }
 
 interface BookingRow {
@@ -28,6 +29,7 @@ interface BookingRow {
   created_at: string
   hold_expires_at: string
   total_count?: number
+  journey_status?: BookingRecord['journeyStatus']
 }
 
 function throwOnError(error: { message: string } | null, operation: string) {
@@ -42,7 +44,7 @@ function displayTime(value: string) {
   return `${hour % 12 || 12}:${minute} ${hour < 12 ? 'AM' : 'PM'}`
 }
 
-function toBookingRecord(row: BookingRow): BookingRecord {
+function toBookingRecord(row: BookingRow, journeyStatus = row.journey_status): BookingRecord {
   return {
     id: row.booking_id,
     bookingCode: row.booking_code,
@@ -57,6 +59,7 @@ function toBookingRecord(row: BookingRow): BookingRecord {
     vehicle: row.vehicle,
     driver: row.driver,
     totalFare: Number(row.fare),
+    journeyStatus: journeyStatus ?? 'not_boarded',
     createdAt: row.created_at,
   }
 }
@@ -96,19 +99,38 @@ export const transportBookingService = {
   },
 
   async listMine(page = 1, pageSize = 20): Promise<PaginatedResult<BookingRecord>> {
-    const { data, error } = await getSupabaseClient().rpc('list_my_transport_bookings', {
+    const client = getSupabaseClient()
+    const { data, error } = await client.rpc('list_my_transport_bookings', {
       p_page: page,
       p_page_size: pageSize,
     })
     throwOnError(error, 'Could not load your bookings')
     const rows = (data ?? []) as BookingRow[]
     const total = Number(rows[0]?.total_count ?? 0)
+    const journeyStatuses = new Map<string, BookingRecord['journeyStatus']>()
+    if (rows.length) {
+      const { data: statusRows, error: statusError } = await client
+        .from('transport_bookings')
+        .select('id,journey_status')
+        .in('id', rows.map((row) => row.booking_id))
+      throwOnError(statusError, 'Could not load journey statuses')
+      for (const statusRow of statusRows ?? []) {
+        journeyStatuses.set(statusRow.id, statusRow.journey_status as BookingRecord['journeyStatus'])
+      }
+    }
     return {
-      items: rows.map(toBookingRecord),
+      items: rows.map((row) => toBookingRecord(row, journeyStatuses.get(row.booking_id))),
       page,
       pageSize,
       total,
       hasMore: page * pageSize < total,
     }
+  },
+
+  async requestJourneyCompletion(bookingId: string): Promise<void> {
+    const { error } = await getSupabaseClient().rpc('request_passenger_journey_completion', {
+      p_booking_id: bookingId,
+    })
+    throwOnError(error, 'Could not request journey completion')
   },
 }

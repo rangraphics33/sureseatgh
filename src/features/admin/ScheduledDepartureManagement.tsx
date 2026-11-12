@@ -19,6 +19,8 @@ export default function ScheduledDepartureManagement() {
   const [assignments, setAssignments] = useState<DepartureAssignment[]>([])
   const [form, setForm] = useState(emptyForm)
   const [editingId, setEditingId] = useState('')
+  const [rescheduling, setRescheduling] = useState<TransportDeparture | null>(null)
+  const [rescheduleForm, setRescheduleForm] = useState({ travelDate: '', departureTime: '', assignmentId: '' })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -60,6 +62,7 @@ export default function ScheduledDepartureManagement() {
     `${assignment.driver_user_id}|${assignment.vehicle_id}` === form.assignmentId)
 
   function editDeparture(departure: TransportDeparture) {
+    setRescheduling(null)
     setEditingId(departure.id)
     setForm({
       routeId: departure.route_id,
@@ -72,6 +75,7 @@ export default function ScheduledDepartureManagement() {
 
   function clearForm() {
     setEditingId('')
+    setRescheduling(null)
     setForm({
       ...emptyForm,
       routeId: publishedRoutes[0]?.id ?? '',
@@ -80,6 +84,46 @@ export default function ScheduledDepartureManagement() {
         : '',
     })
     setNotice('')
+  }
+
+  function beginReschedule(departure: TransportDeparture) {
+    setEditingId('')
+    setRescheduling(departure)
+    setRescheduleForm({
+      travelDate: departure.travel_date,
+      departureTime: departure.departure_time.slice(0, 5),
+      assignmentId: `${departure.driver_user_id}|${departure.vehicle_id}`,
+    })
+    setNotice('Changing this scheduled trip will notify passengers with confirmed bookings.')
+    setError('')
+  }
+
+  async function submitReschedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const [driverUserId, vehicleId] = rescheduleForm.assignmentId.split('|')
+    if (!rescheduling || !driverUserId || !vehicleId) {
+      setError('Choose a currently eligible assigned vehicle and driver.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      await transportDepartureService.reschedule({
+        departureId: rescheduling.id,
+        travelDate: rescheduleForm.travelDate,
+        departureTime: rescheduleForm.departureTime,
+        driverUserId,
+        vehicleId,
+      })
+      setRescheduling(null)
+      setNotice('Departure rescheduled. Passengers with confirmed bookings have been notified.')
+      await refresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Departure could not be rescheduled.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -148,9 +192,19 @@ export default function ScheduledDepartureManagement() {
       {!loading && !assignments.length && <p className="muted">No eligible assigned vehicle and driver pair is available. Check driver approval, vehicle status, assignment, and required vehicle documents.</p>}
       <button className="button button-primary" disabled={saving || loading || !publishedRoutes.length || !assignments.length}><Plus size={16} />{saving ? 'Saving…' : editingId ? 'Save departure' : 'Schedule departure'}</button>
     </form>
+    {rescheduling && <form className="panel" onSubmit={(event) => void submitReschedule(event)}>
+      <div className="panel-heading"><div><h2>Reschedule departure</h2><p className="muted">{routeName(rescheduling.route_id)} · existing passenger bookings stay attached to this route.</p></div><button className="button button-secondary" type="button" onClick={() => setRescheduling(null)}>Cancel</button></div>
+      <div className="form-grid">
+        <label className="field">New travel date<input type="date" min={localDate()} required value={rescheduleForm.travelDate} onChange={(event) => setRescheduleForm({ ...rescheduleForm, travelDate: event.target.value })} /></label>
+        <label className="field">New departure time<input type="time" required value={rescheduleForm.departureTime} onChange={(event) => setRescheduleForm({ ...rescheduleForm, departureTime: event.target.value })} /></label>
+        <label className="field">Eligible driver and vehicle<select required value={rescheduleForm.assignmentId} onChange={(event) => setRescheduleForm({ ...rescheduleForm, assignmentId: event.target.value })}><option value="">Select eligible assignment</option>{assignments.map((assignment) => <option value={`${assignment.driver_user_id}|${assignment.vehicle_id}`} key={`${assignment.driver_user_id}|${assignment.vehicle_id}`}>{assignment.driver_name} · {assignment.registration_number} · {assignment.seating_capacity} seats</option>)}</select></label>
+      </div>
+      <p className="muted">The database will verify capacity against each booked route segment. Confirmed passengers will receive an in-app trip update.</p>
+      <button className="button button-primary" disabled={saving || loading || !assignments.length}>{saving ? 'Rescheduling…' : 'Save reschedule'}</button>
+    </form>}
     <div className="panel">
       <div className="panel-heading"><h2>Upcoming departures</h2><span className="status-pill">{departures.length}</span></div>
-      {loading ? <p className="muted" role="status">Loading departures…</p> : departures.length ? <div className="table-scroll"><table><thead><tr><th>Date & time</th><th>Route</th><th>Driver & vehicle</th><th>Capacity</th><th>Status</th><th>Action</th></tr></thead><tbody>{departures.map((departure) => <tr key={departure.id}><td>{departure.travel_date} · {departure.departure_time.slice(0, 5)}</td><td>{routeName(departure.route_id)}</td><td>{assignmentName(departure)}</td><td>{departure.capacity} seats</td><td>{departure.status}</td><td>{departure.status === 'scheduled' && <button className="button button-secondary" type="button" onClick={() => editDeparture(departure)}>Edit</button>}</td></tr>)}</tbody></table></div> : <div className="empty-state"><CalendarDays /><h3>No upcoming departures</h3><p>Schedule the first departure above after routes and eligible fleet assignments are ready.</p></div>}
+      {loading ? <p className="muted" role="status">Loading departures…</p> : departures.length ? <div className="table-scroll"><table><thead><tr><th>Date & time</th><th>Route</th><th>Driver & vehicle</th><th>Capacity</th><th>Status</th><th>Action</th></tr></thead><tbody>{departures.map((departure) => <tr key={departure.id}><td>{departure.travel_date} · {departure.departure_time.slice(0, 5)}</td><td>{routeName(departure.route_id)}</td><td>{assignmentName(departure)}</td><td>{departure.capacity} seats</td><td>{departure.status}</td><td>{departure.status === 'scheduled' && <div className="button-row compact"><button className="button button-secondary" type="button" onClick={() => editDeparture(departure)}>Edit</button><button className="button button-secondary" type="button" onClick={() => beginReschedule(departure)}>Reschedule</button></div>}</td></tr>)}</tbody></table></div> : <div className="empty-state"><CalendarDays /><h3>No upcoming departures</h3><p>Schedule the first departure above after routes and eligible fleet assignments are ready.</p></div>}
     </div>
   </>
 }

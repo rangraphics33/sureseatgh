@@ -5,7 +5,7 @@ import {
   Check, CheckCircle2, ChevronDown, CircleHelp, Clock3, CreditCard,
   FileCheck2, Headphones, Home, LayoutDashboard, MapPin,
   Moon, MoreHorizontal, Navigation, Plus, Search, Settings, ShieldCheck, Sun, Ticket,
-  UserRound, Wallet, X,
+  RotateCcw, UserRound, Wallet, X,
 } from 'lucide-react'
 import heroVan from './assets/a_realistic_high_resolution_png_cutout_of_the_sam.png'
 import { DashboardSkeleton, SectionSkeleton, Skeleton } from './components/Skeleton'
@@ -18,6 +18,8 @@ import { isPreviewMode, platformConfigurationError, platformService } from './se
 import type { BookingRecord, PaginatedResult } from './services/platform'
 import { ensureStarterTransportRoutes, getTransportRoutes, saveTransportRoute } from './services/transportRoutes'
 import { transportBookingService } from './services/transportBookings'
+import { transportNotificationService } from './services/transportNotifications.ts'
+import type { TransportNotification } from './services/transportNotifications.ts'
 import SubscriptionScreen from './features/subscriptions/SubscriptionScreen'
 import type { SubscriptionSnapshot } from './features/subscriptions/SubscriptionScreen'
 import DriverApplicationReview from './features/admin/DriverApplicationReview'
@@ -25,6 +27,8 @@ import IdentityVerificationReview from './features/admin/IdentityVerificationRev
 import AdminDashboard from './features/admin/AdminDashboard'
 import FleetManagement, { DriverAssignedVehicle } from './features/admin/FleetManagement'
 import ScheduledDepartureManagement from './features/admin/ScheduledDepartureManagement'
+import DriverTransportWorkspace from './features/driver/DriverTransportWorkspace'
+import type { DriverSection } from './features/driver/DriverTransportWorkspace'
 import { canAccessWorkspacePath, getWorkspaceOptions, isAccountRestricted } from './features/auth/access.ts'
 import { useAuth } from './features/auth/authContext.ts'
 import type { AuthSnapshot } from './services/auth.ts'
@@ -46,6 +50,7 @@ type Booking = {
   vehicle: string
   fare: number
   status: string
+  journeyStatus: 'not_boarded' | 'boarded' | 'completion_requested' | 'completed'
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -64,6 +69,7 @@ function toBooking(record: BookingRecord, showPreviewData: boolean): Booking {
     driver: record.driver,
     vehicle: record.vehicle,
     fare: record.totalFare,
+    journeyStatus: record.journeyStatus ?? 'not_boarded',
     status: record.status === 'pending_payment'
       ? showPreviewData && record.id.startsWith('PRE-') ? 'Preview hold · pending payment' : 'Pending payment'
       : record.status.replaceAll('_', ' '),
@@ -92,6 +98,7 @@ const moreNavigation: Record<Workspace, { label: string; icon: ReactNode }[]> = 
   ],
   Driver: [
     { label: 'Passenger Manifest', icon: <FileCheck2 /> }, { label: 'Driver Profile', icon: <UserRound /> },
+    { label: 'Notifications', icon: <Bell /> },
   ],
   Admin: [
     { label: 'Passengers', icon: <UserRound /> }, { label: 'Vehicles', icon: <Bus /> },
@@ -199,6 +206,7 @@ function App() {
   const [bookingsHasMore, setBookingsHasMore] = useState(false)
   const [bookingsReloadKey, setBookingsReloadKey] = useState(0)
   const [paymentActionId, setPaymentActionId] = useState('')
+  const [completionActionId, setCompletionActionId] = useState('')
   const [subscriptionSnapshot, setSubscriptionSnapshot] = useState<SubscriptionSnapshot>({ subscription: null, renewal: null, payments: [] })
   const [driverTrips, setDriverTrips] = useState<DriverTrip[]>([])
   const [driverTripsLoading, setDriverTripsLoading] = useState(false)
@@ -216,6 +224,11 @@ function App() {
   const [newRouteVia, setNewRouteVia] = useState('')
   const [routeSaving, setRouteSaving] = useState(false)
   const [readNotifications, setReadNotifications] = useState(false)
+  const [transportNotifications, setTransportNotifications] = useState<TransportNotification[]>([])
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsError, setNotificationsError] = useState('')
+  const [notificationsReloadKey, setNotificationsReloadKey] = useState(0)
+  const [markingNotificationsRead, setMarkingNotificationsRead] = useState(false)
   const [driverApplications, setDriverApplications] = useState<Record<string, string>>({})
 
   const activeRoute = routes.find((route) => route.id === selectedRouteId)
@@ -251,6 +264,39 @@ function App() {
   const saveSubscriptionSnapshot = useCallback((snapshot: SubscriptionSnapshot) => {
     setSubscriptionSnapshot(snapshot)
   }, [])
+
+  useEffect(() => {
+    if (authMode !== 'supabase' || section !== 'Notifications') return
+    let cancelled = false
+    async function loadNotifications() {
+      setNotificationsLoading(true)
+      setNotificationsError('')
+      try {
+        const rows = await transportNotificationService.listMine()
+        if (!cancelled) setTransportNotifications(rows)
+      } catch (error) {
+        if (!cancelled) setNotificationsError(getErrorMessage(error, 'Notifications could not be loaded.'))
+      } finally {
+        if (!cancelled) setNotificationsLoading(false)
+      }
+    }
+    void loadNotifications()
+    return () => { cancelled = true }
+  }, [authMode, notificationsReloadKey, section])
+
+  async function markTransportNotificationsRead() {
+    setMarkingNotificationsRead(true)
+    setNotificationsError('')
+    try {
+      await transportNotificationService.markAllRead()
+      const readAt = new Date().toISOString()
+      setTransportNotifications((current) => current.map((notification) => ({ ...notification, readAt: notification.readAt ?? readAt })))
+    } catch (error) {
+      setNotificationsError(getErrorMessage(error, 'Notifications could not be marked as read.'))
+    } finally {
+      setMarkingNotificationsRead(false)
+    }
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -573,6 +619,19 @@ function App() {
     }
   }
 
+  async function requestJourneyCompletion(booking: Booking) {
+    setCompletionActionId(booking.id)
+    try {
+      await transportBookingService.requestJourneyCompletion(booking.id)
+      setToast('Journey completion requested. Your driver will confirm after you are off the vehicle.')
+      setBookingsReloadKey((key) => key + 1)
+    } catch (error) {
+      setToast(getErrorMessage(error, 'Could not send the journey completion request.'))
+    } finally {
+      setCompletionActionId('')
+    }
+  }
+
   function startTrip(trip: DriverTrip) {
     if (!showPreviewData) {
       setToast('Trip start is not connected in API mode.')
@@ -790,11 +849,14 @@ function App() {
       case 'Booking':
         return <><PageTitle eyebrow="PASSENGER · BOOKING" title="Book a ride" detail="Route-first booking keeps your pickup and destination in the right order." />{isLoading || routesLoading ? <SectionSkeleton variant="booking" /> : renderBookingForm()}</>
       case 'My Trips':
-        return <><PageTitle eyebrow="PASSENGER · TRAVEL" title="My trips" detail="Your confirmed and completed journeys appear here." />
+        return <><PageTitle eyebrow="PASSENGER · TRAVEL" title="My trips" detail="Your confirmed and completed journeys appear here." action={authMode === 'supabase' ? <button className="button button-secondary" type="button" disabled={bookingsLoading} onClick={() => setBookingsReloadKey((key) => key + 1)}><RotateCcw size={16} />Refresh trips</button> : undefined} />
           {isLoading || bookingsLoading ? <SectionSkeleton variant="trips" />
             : bookingsError ? <EmptyState icon={<CircleHelp />} title="Trips could not be loaded" detail={bookingsError} action={<button className="button button-secondary" onClick={() => setBookingsReloadKey((key) => key + 1)}>Retry</button>} />
               : bookings.length ? <div className="card-list">{bookings.map((booking) => <article className="panel trip-card" key={booking.id}><div className="trip-card-top"><span className="stat-icon"><Ticket /></span><span className="status-pill">{booking.status}</span></div><h2>{booking.route}</h2><p className="muted">{booking.date} · {booking.departure}</p><div className="route-points"><span>{booking.pickup}</span><ArrowRight /><span>{booking.dropoff}</span></div><div className="trip-meta"><span>Booking code <b>{booking.code}</b></span><span>{booking.vehicle} · {booking.driver}</span><b>{formatGhs(booking.fare)} {authMode !== 'supabase' && showPreviewData ? 'preview fare' : ''}</b></div>
                 {authMode === 'supabase' && booking.status === 'Pending payment' && <div className="trip-payment-actions"><p className="muted">This seat is held temporarily. Paystack must verify payment before this booking is confirmed.</p><div className="button-row"><button className="button button-primary" disabled={Boolean(paymentActionId)} onClick={() => void startTransportPayment(booking)}><CreditCard />{paymentActionId === booking.id ? 'Opening secure checkout…' : 'Pay with Paystack'}</button><button className="button button-secondary" disabled={Boolean(paymentActionId)} onClick={() => void checkTransportPayment(booking)}>{paymentActionId === booking.id ? 'Checking…' : 'Check payment'}</button></div></div>}
+                {authMode === 'supabase' && booking.status === 'confirmed' && booking.journeyStatus === 'boarded' && <div className="trip-payment-actions"><p className="muted">After you have left the vehicle at your destination, request journey completion for your driver to confirm.</p><button className="button button-secondary" type="button" disabled={Boolean(completionActionId)} onClick={() => void requestJourneyCompletion(booking)}>{completionActionId === booking.id ? 'Sending request…' : 'Request journey completion'}</button></div>}
+                {authMode === 'supabase' && booking.journeyStatus === 'completion_requested' && <p className="preview-note">Journey completion requested. Waiting for your driver to confirm.</p>}
+                {authMode === 'supabase' && booking.journeyStatus === 'completed' && <p className="preview-note">Journey completed.</p>}
               </article>)}
                 {bookingsHasMore && <button className="button button-secondary" disabled={bookingsLoading} onClick={() => setBookingsPage((page) => page + 1)}>Load more trips</button>}
               </div>
@@ -811,8 +873,16 @@ function App() {
       case 'Profile & Verification':
         return isLoading ? <><PageTitle eyebrow="PASSENGER · ACCOUNT" title="Profile & verification" detail="Manage your personal information and identity verification." /><SectionSkeleton variant="profile" /></> : <ProfileScreen toast={setToast} authSnapshot={authSnapshot} />
       case 'Notifications':
-        return <><PageTitle eyebrow="PASSENGER · UPDATES" title="Notifications" detail="Important booking and trip updates, all in one place." action={<button className="button button-secondary" onClick={() => { setReadNotifications(true); setToast('Notifications marked as read.') }}>Mark all read</button>} />
-          {showPreviewData
+        return <><PageTitle eyebrow={`${workspace?.toUpperCase() ?? 'PASSENGER'} · UPDATES`} title="Notifications" detail="Important booking and trip updates, all in one place." action={authMode === 'supabase' ? undefined : <button className="button button-secondary" onClick={() => { setReadNotifications(true); setToast('Notifications marked as read.') }}>Mark all read</button>} />
+          {authMode === 'supabase'
+            ? <>
+              <div className="button-row"><button className="button button-secondary" type="button" disabled={notificationsLoading} onClick={() => setNotificationsReloadKey((key) => key + 1)}><RotateCcw size={16} />Refresh updates</button><button className="button button-secondary" type="button" disabled={markingNotificationsRead || notificationsLoading || !transportNotifications.some((item) => !item.readAt)} onClick={() => void markTransportNotificationsRead()}>{markingNotificationsRead ? 'Marking…' : 'Mark all read'}</button></div>
+              {notificationsError && <p className="fleet-feedback fleet-error" role="alert">{notificationsError}</p>}
+              {notificationsLoading ? <SectionSkeleton variant="trips" /> : transportNotifications.length
+                ? <div className="card-list">{transportNotifications.map((notification) => <article className="panel notification-card" key={notification.id}><span className="stat-icon"><Bell /></span><div><strong>{notification.title}</strong><p>{notification.message}</p><small className="muted">{new Date(notification.createdAt).toLocaleString()} · {notification.readAt ? 'Read' : 'Unread'}</small></div></article>)}</div>
+                : <EmptyState icon={<Bell />} title="No trip updates yet" detail="Payment, boarding, departure, and journey updates will appear here." />}
+            </>
+            : showPreviewData
             ? <div className="card-list">{(readNotifications ? [] : ['Your SureSeat preview workspace is ready.', 'Route-first booking is available to try.']).map((message, index) => <div className="panel notification-card" key={message}><span className="stat-icon"><Bell /></span><div><strong>{message}</strong><p className="muted">{index ? 'Booking · Just now' : 'Account · Just now'}</p><PreviewLabel /></div></div>)}
               {readNotifications && <EmptyState icon={<CheckCircle2 />} title="You are all caught up" detail="New trip and account updates will appear here." />}</div>
             : <EmptyState icon={<Bell />} title="Live notifications are not connected" detail="Preview notices are hidden in authenticated mode." />}
@@ -825,6 +895,9 @@ function App() {
   }
 
   function renderDriver() {
+    if (authMode === 'supabase' && ['Overview', 'Assigned Trips', 'Passenger Manifest', 'Active Trip'].includes(section)) {
+      return <DriverTransportWorkspace section={section as DriverSection} onNavigate={navigate} />
+    }
     switch (section) {
       case 'Assigned Trips':
         return <><PageTitle eyebrow="DRIVER · SCHEDULE" title="Assigned trips" detail="Enter the booking code from a passenger manifest to start the assigned trip." />
@@ -999,7 +1072,7 @@ function App() {
           <div className="topbar-context"><span className="workspace-chip">{workspace} dashboard</span>{showPreviewData && <PreviewLabel />}</div>
           <div className="topbar-actions">
             <button className="icon-button theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon /> : <Sun />}</button>
-            <button className="icon-button notification-toggle" aria-label="Open notifications" onClick={() => navigate(workspace === 'Passenger' ? 'Notifications' : workspace === 'Admin' ? 'Notifications' : 'Active Trip')}><Bell />{(!readNotifications || endTripRequested) && <i />}</button>
+            <button className="icon-button notification-toggle" aria-label="Open notifications" onClick={() => navigate(workspace === 'Passenger' ? 'Notifications' : workspace === 'Admin' ? 'Notifications' : 'Notifications')}><Bell />{(authMode === 'supabase' ? transportNotifications.some((item) => !item.readAt) : !readNotifications || endTripRequested) && <i />}</button>
             {authSnapshot && <div className="user-chip"><span className="avatar">{(authSnapshot.profile.full_name?.trim().charAt(0) || authSnapshot.user.email?.charAt(0) || 'S').toUpperCase()}</span><span>{authSnapshot.profile.full_name || authSnapshot.user.email || 'SureSeat account'}<small>{accountRestricted ? 'Verification required' : 'Signed in'}</small></span></div>}
             {!authSnapshot && <div className="user-chip"><span className="avatar">{workspace === 'Admin' ? 'A' : workspace === 'Driver' ? 'K' : 'C'}</span><span>{workspace === 'Admin' ? 'Admin' : workspace === 'Driver' ? 'Kwame Mensah' : 'Commuter'}<small>Preview account</small></span></div>}
             {authSnapshot && getWorkspaceOptions(authSnapshot).length > 1 && <button className="icon-button" aria-label="Switch workspace" title="Switch workspace" onClick={() => window.location.assign('/workspace')}><LayoutDashboard /></button>}
