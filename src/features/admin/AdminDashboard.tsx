@@ -94,6 +94,7 @@ export default function AdminDashboard({ access, shortcuts, isPreviewMode, isSup
   }
 
   const metrics = data?.metrics ?? []
+  const featuredShortcuts = shortcuts.filter((item) => ['Bookings', 'Trips', 'Drivers', 'Passengers', 'Routes', 'Staff & access'].includes(item.label))
 
   return (
     <>
@@ -115,11 +116,14 @@ export default function AdminDashboard({ access, shortcuts, isPreviewMode, isSup
             .map((label) => <MetricCard key={label} metric={{ label, value: null, status: 'not_connected', detail: '' }} loading />)
           : metrics.map((metric) => <MetricCard key={metric.label} metric={metric} loading={loading} />)}
       </div>
-      <div className="admin-shortcuts">
-        {shortcuts.map((item) => <button className="panel shortcut-card" key={item.label} onClick={item.onClick}>
+      <section className="admin-quick-access" aria-labelledby="admin-quick-access-title">
+        <div className="panel-heading"><div><h2 id="admin-quick-access-title">Quick access</h2><p className="muted">Common tasks and work queues</p></div></div>
+        <div className="admin-shortcuts">
+        {featuredShortcuts.map((item) => <button className="panel shortcut-card" key={item.label} onClick={item.onClick}>
           {item.icon}<strong>{item.label}</strong><ArrowRight />
         </button>)}
-      </div>
+        </div>
+      </section>
       <section className="panel admin-activity">
         <div className="panel-heading">
           <div><h2>Recent activity</h2><p className="muted">Administrative audit events</p></div>

@@ -37,6 +37,8 @@ export interface DriverApplicationDocument {
 export interface PendingDriverApplication {
   id: string
   userId: string
+  fullName: string | null
+  phone: string | null
   vehicleType: string
   vehicleRegistrationNumber: string
   experienceYears: number
@@ -112,13 +114,30 @@ async function assertDriverReviewPermission(client: ReturnType<typeof getSupabas
 }
 
 export const sureSeatAuth = {
-  async signUp(email: string, password: string, fullName: string) {
+  async updateOwnProfile(input: { fullName: string; phone: string }) {
+    const fullName = input.fullName.trim()
+    const phone = input.phone.trim()
+    if (!fullName || fullName.length > 120) throw new Error('Enter a name between 1 and 120 characters.')
+    if (phone.length > 30) throw new Error('Phone number must be 30 characters or fewer.')
+    const client = getSupabaseClient()
+    const { data, error } = await client.auth.getUser()
+    throwOnSupabaseError(error, 'Could not validate the current account')
+    if (!data.user) throw new Error('Sign in before updating your profile.')
+    const { error: updateError } = await client.from('profiles')
+      .update({ full_name: fullName, phone: phone || null })
+      .eq('id', data.user.id)
+    throwOnSupabaseError(updateError, 'Could not save your profile')
+  },
+  async signUp(email: string, password: string, fullName: string, returnTo?: string | null) {
+    const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') && !returnTo.includes('\\')
+      ? returnTo
+      : null
     const { data, error } = await getSupabaseClient().auth.signUp({
       email: email.trim().toLowerCase(),
       password,
       options: {
         data: { full_name: fullName.trim() },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: `${window.location.origin}/auth/callback${safeReturnTo ? `?next=${encodeURIComponent(safeReturnTo)}` : ''}`,
       },
     })
     throwOnSupabaseError(error, 'Could not create the account')
@@ -225,9 +244,7 @@ export const sureSeatAuth = {
       .eq('id', verificationId)
       .maybeSingle()
     throwOnSupabaseError(error, 'Could not load the verification document reference')
-    if (!data || data.status !== 'pending') {
-      throw new Error('The pending verification record is no longer available.')
-    }
+    if (!data) throw new Error('The identity verification record is no longer available.')
 
     const path = data.document_object_path
     if (!path.startsWith(`${data.user_id}/`) || path.includes('..') || path.includes('\\')) {
@@ -459,6 +476,10 @@ export const sureSeatAuth = {
     throwOnSupabaseError(error, 'Could not load pending Driver applications')
     if (!data?.length) return []
 
+    const { data: directory, error: directoryError } = await client.rpc('admin_list_transport_people', { p_role: 'driver' })
+    throwOnSupabaseError(directoryError, 'Could not load Driver applicant details')
+    const profileByUser = new Map<string, { user_id: string; full_name: string | null; phone: string | null }>((directory ?? []).map((person: { user_id: string; full_name: string | null; phone: string | null }) => [person.user_id, person]))
+
     const applicationIds = data.map((application) => application.id)
     const { data: documentRows, error: documentsError } = await client
       .from('driver_application_documents')
@@ -480,6 +501,8 @@ export const sureSeatAuth = {
     return data.map((application) => ({
       id: application.id,
       userId: application.user_id,
+      fullName: profileByUser.get(application.user_id)?.full_name ?? null,
+      phone: profileByUser.get(application.user_id)?.phone ?? null,
       vehicleType: application.vehicle_type,
       vehicleRegistrationNumber: application.vehicle_registration_number,
       experienceYears: application.experience_years,
@@ -499,9 +522,7 @@ export const sureSeatAuth = {
       .eq('id', applicationId)
       .maybeSingle()
     throwOnSupabaseError(applicationError, 'Could not load the Driver application')
-    if (!application || application.status !== 'pending') {
-      throw new Error('The pending Driver application is no longer available.')
-    }
+    if (!application) throw new Error('The Driver application is no longer available.')
 
     const { data: document, error: documentError } = await client.from('driver_application_documents')
       .select('object_path')

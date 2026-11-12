@@ -139,8 +139,8 @@ export default function DriverApplicationReview() {
                       <div className="identity-applicant">
                         <span className="entry-icon"><FileCheck2 /></span>
                         <div>
-                          <h3>{application.vehicleType}</h3>
-                          <p className="identity-user-id">Applicant: {application.userId}</p>
+                          <h3>{application.fullName || 'Driver applicant'}</h3>
+                          <p className="identity-user-id">{application.phone || 'No contact number added'} · Account {application.userId}</p>
                         </div>
                         <span className="status-pill">Pending review</span>
                       </div>

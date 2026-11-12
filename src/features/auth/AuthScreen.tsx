@@ -13,6 +13,7 @@ function getPostAuthPath(
   portal: AuthPortal,
 ) {
   const requested = getSafeReturnPath(nextValue)
+  if (requested === '/accept-invitation' || requested?.startsWith('/accept-invitation?')) return requested
   if (requested === '/driver-application' && portal === 'passenger' && roles.roles.includes('passenger')) return requested
   if (requested?.startsWith(`/${portal}/`)
     && canAccessWorkspacePath(requested, roles)) return requested
@@ -76,9 +77,9 @@ export default function AuthScreen({
         }
         window.location.assign(getPostAuthPath(returnTo ?? null, snapshot, portal))
       } else if (kind === 'register') {
-        const hasSession = await signUp(email, password, fullName)
-        if (hasSession) {
-          window.location.assign('/workspace')
+        const snapshot = await signUp(email, password, fullName, returnTo)
+        if (snapshot) {
+          window.location.assign(getPostAuthPath(returnTo ?? null, snapshot, portal))
         } else {
           setNotice('Account created. Check your email to confirm the address, then sign in.')
         }
@@ -153,7 +154,9 @@ export default function AuthScreen({
               ? 'Enter your email and we will send a reset link if the account is registered.'
               : isReset
                 ? 'Use a strong password that you have not used elsewhere.'
-                : 'Sign in to continue to your authorized SureSeat workspace.'}
+                : portal === 'driver'
+                  ? 'Use the same account you used to apply. Driver sign in becomes available after an administrator approves your application.'
+                  : 'Sign in to continue to your authorized SureSeat workspace.'}
         </p>
 
         {error && <p className="auth-feedback auth-error" role="alert">{error}</p>}
@@ -209,7 +212,7 @@ export default function AuthScreen({
         ) : null}
 
         <nav className="auth-links" aria-label="Account options">
-          {kind === 'login' && <><a href={`/forgot-password${forgotQuery}`}>Forgot password?</a>{portal === 'passenger' && <><span>·</span><a href={`/passenger/register${returnQuery}`}>Create account</a></>}</>}
+          {kind === 'login' && <><a href={`/forgot-password${forgotQuery}`}>Forgot password?</a>{portal === 'passenger' && <><span>·</span><a href={`/passenger/register${returnQuery}`}>Create account</a></>}{portal === 'driver' && <><span>·</span><a href="/passenger/register?next=%2Fdriver-application">New driver? Create account & apply</a></>}</>}
           {kind === 'register' && <><span>Already registered?</span><a href={loginPath}>Sign in</a></>}
           {(isForgot || isReset) && <a href={loginPath}>Back to sign in</a>}
         </nav>

@@ -107,11 +107,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!current) throw new Error('Supabase did not return an authenticated account.')
       return current
     },
-    async signUp(email, password, fullName) {
+    async signUp(email, password, fullName, returnTo) {
       if (authMode !== 'supabase') throw new Error('Registration is available only in Supabase authentication mode.')
-      const result = await sureSeatAuth.signUp(email, password, fullName)
-      if (result.session) await refresh()
-      return Boolean(result.session)
+      const result = await sureSeatAuth.signUp(email, password, fullName, returnTo)
+      if (result.session) return refresh()
+      return null
     },
     async signOut() {
       await sureSeatAuth.signOut()
@@ -122,6 +122,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     requestPasswordReset: (email) => sureSeatAuth.requestPasswordReset(email),
     updatePassword: (password) => sureSeatAuth.updatePassword(password),
+    async updateOwnProfile(input) {
+      await sureSeatAuth.updateOwnProfile(input)
+      await refresh()
+    },
     async applyForDriver(input: DriverApplicationInput) {
       await sureSeatAuth.submitDriverApplication(input)
       await refresh()

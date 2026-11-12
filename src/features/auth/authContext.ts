@@ -11,10 +11,11 @@ export interface AuthContextValue {
   error: string
   refresh: () => Promise<AuthSnapshot | null>
   signIn: (email: string, password: string) => Promise<AuthSnapshot>
-  signUp: (email: string, password: string, fullName: string) => Promise<boolean>
+  signUp: (email: string, password: string, fullName: string, returnTo?: string | null) => Promise<AuthSnapshot | null>
   signOut: () => Promise<void>
   requestPasswordReset: (email: string) => Promise<void>
   updatePassword: (password: string) => Promise<void>
+  updateOwnProfile: (input: { fullName: string; phone: string }) => Promise<void>
   applyForDriver: (input: DriverApplicationInput) => Promise<void>
   submitIdentityVerification: (file: File) => Promise<void>
 }

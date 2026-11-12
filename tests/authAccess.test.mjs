@@ -55,12 +55,14 @@ test('staff admin routes require the corresponding assigned permission', () => {
   }), true)
   assert.equal(canAccessWorkspacePath('/admin/platform-settings', staff), false)
   assert.equal(canAccessWorkspacePath('/admin/overview', staff), true)
+  assert.equal(canAccessWorkspacePath('/admin/staff-access', staff), false)
 })
 
 test('Driver application review is limited to drivers.approve', () => {
   const reader = { roles: ['staff'], permissions: ['drivers.read'], driverApplicationStatus: null }
   const reviewer = { roles: ['staff'], permissions: ['drivers.approve'], driverApplicationStatus: null }
   assert.equal(canAccessWorkspacePath('/admin/driver-applications', reader), false)
+  assert.equal(canAccessWorkspacePath('/admin/drivers', reader), true)
   assert.equal(canAccessWorkspacePath('/admin/driver-applications', reviewer), true)
   assert.equal(canAccessWorkspacePath('/admin/driver-applications', {
     roles: ['administrator'],

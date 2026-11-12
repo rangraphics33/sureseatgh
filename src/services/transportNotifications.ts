@@ -22,11 +22,41 @@ interface NotificationRow {
   read_at: string | null
 }
 
+interface RealtimeNotificationRow extends Omit<NotificationRow, 'notification_id'> {
+  id: string
+}
+
 function throwOnError(error: { message: string } | null, operation: string) {
   if (error) throw new Error(`${operation}: ${error.message}`)
 }
 
 export const transportNotificationService = {
+  subscribeToMine(recipientUserId: string, onInsert: (notification: TransportNotification) => void) {
+    const client = getSupabaseClient()
+    const channel = client
+      .channel(`transport-notifications-${recipientUserId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'transport_notifications',
+        filter: `recipient_user_id=eq.${recipientUserId}`,
+      }, (payload) => {
+        const row = payload.new as RealtimeNotificationRow
+        onInsert({
+          id: row.id,
+          bookingId: row.booking_id,
+          departureId: row.departure_id,
+          eventType: row.event_type,
+          title: row.title,
+          message: row.message,
+          createdAt: row.created_at,
+          readAt: row.read_at,
+        })
+      })
+      .subscribe()
+    return () => { void client.removeChannel(channel) }
+  },
+
   async listMine(limit = 50): Promise<TransportNotification[]> {
     const { data, error } = await getSupabaseClient().rpc('list_my_transport_notifications', {
       p_limit: limit,

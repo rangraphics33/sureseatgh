@@ -16,6 +16,7 @@ import type { AuthPortal } from './access.ts'
 import AuthScreen from './AuthScreen.tsx'
 import type { AuthScreenKind } from './AuthScreen.tsx'
 import { useAuth } from './authContext.ts'
+import { getSupabaseClient } from '../../services/supabaseClient.ts'
 
 const requiredDriverDocuments = [
   { key: 'ghana_card', label: 'Ghana Card', accept: 'image/jpeg,image/png,application/pdf' },
@@ -193,6 +194,29 @@ function AuthFailure() {
   return <AccessMessage title="Account access could not be verified" detail={error || 'A required account or role check failed. Access is blocked until the issue is resolved.'} action={<button className="button button-secondary" onClick={() => void refresh().catch(() => undefined)}>Try again</button>} />
 }
 
+function AcceptStaffInvitation() {
+  const { refresh } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [accepted, setAccepted] = useState(false)
+  const token = new URLSearchParams(window.location.search).get('token')?.trim() ?? ''
+  async function accept() {
+    setBusy(true); setError('')
+    try {
+      if (!token) throw new Error('This invitation link is missing its secure token. Ask an administrator for a new invitation.')
+      const { error: rpcError } = await getSupabaseClient().rpc('accept_admin_invitation', { p_token: token })
+      if (rpcError) throw rpcError
+      await refresh()
+      setAccepted(true)
+    } catch (acceptError) {
+      setError(acceptError instanceof Error ? acceptError.message : 'The invitation could not be accepted.')
+    } finally { setBusy(false) }
+  }
+  const invitationPath = `${window.location.pathname}${window.location.search}`
+  const next = encodeURIComponent(invitationPath)
+  return <AccessMessage title={accepted ? 'Staff access is ready' : 'Accept your staff invitation'} detail={error || (accepted ? 'Your department access has been added. Open your SureSeat workspace to continue.' : 'Sign in with the email address that received this invitation, then accept it to activate your staff access.')} action={<div className="button-row"><button className="button button-primary" type="button" onClick={() => accepted ? window.location.assign('/workspace') : void accept()} disabled={busy || accepted || !token}>{accepted ? 'Open workspace' : busy ? 'Accepting invitation…' : 'Accept invitation'}</button>{!accepted && <><a className="button button-secondary" href={`/login?next=${next}&portal=passenger`}>Sign in first</a><a className="text-button" href={`/register?next=${next}`}>Create account</a></>}</div>} />
+}
+
 export default function AuthRouter() {
   const { mode, status, snapshot } = useAuth()
   const [pathname, setPathname] = useState(window.location.pathname)
@@ -224,12 +248,19 @@ export default function AuthRouter() {
         driver: '/driver/overview',
         admin: '/admin/overview',
       }
+      if (pathname === '/auth/callback' && snapshot) {
+        const requested = safeReturnTo
+        const invitationReturn = requested === '/accept-invitation' || requested?.startsWith('/accept-invitation?')
+        const allowedReturn = requested === '/driver-application'
+          ? snapshot.roles.includes('passenger')
+          : invitationReturn || (!!requested && canAccessWorkspacePath(requested, snapshot))
+        window.location.replace(allowedReturn && requested ? requested : '/workspace')
+        return
+      }
       const portalPath = resolvedAuthRoute ? portalHome[portal] : null
-      window.location.replace(portalPath && snapshot && canAccessWorkspacePath(portalPath, snapshot)
-        ? portalPath
-        : '/workspace')
+      window.location.replace(portalPath && snapshot && canAccessWorkspacePath(portalPath, snapshot) ? portalPath : '/workspace')
     }
-  }, [canOpenPortalAfterAuth, mode, pathname, portal, resolvedAuthRoute, snapshot, status])
+  }, [canOpenPortalAfterAuth, mode, pathname, portal, resolvedAuthRoute, safeReturnTo, snapshot, status])
 
   if (mode === 'invalid' || status === 'error') return <AuthFailure />
   if (mode === 'preview') {
@@ -248,7 +279,7 @@ export default function AuthRouter() {
       ? <LoadingPage message="Opening your workspace" />
       : <AccessMessage title="Check your email" detail="If your email address is confirmed, return here after opening the confirmation link and sign in." action={<a className="button button-primary" href="/login">Sign in <ArrowRight /></a>} />
   }
-  if (status === 'unauthenticated' && (pathname === '/workspace' || pathname.startsWith('/passenger/')
+  if (status === 'unauthenticated' && (pathname === '/workspace' || pathname === '/accept-invitation' || pathname.startsWith('/passenger/')
     || pathname.startsWith('/driver/') || pathname.startsWith('/admin/') || pathname === '/driver-application')) {
     const requested = `${pathname}${window.location.search}`
     return <AuthScreen kind="login" returnTo={requested} portal={getPortalForWorkspacePath(pathname) ?? 'passenger'} />
@@ -256,6 +287,7 @@ export default function AuthRouter() {
   if (status === 'unauthenticated') return <App />
   if (!snapshot) return <AuthFailure />
 
+  if (pathname === '/accept-invitation') return <AcceptStaffInvitation />
   if (pathname === '/workspace') return <WorkspacePicker />
   if (pathname === '/driver-application') return <DriverApplication />
 

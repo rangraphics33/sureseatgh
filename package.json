@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test tests/pricing.test.mjs tests/apiClient.test.mjs tests/platform.test.mjs tests/supabaseConfig.test.mjs tests/authAccess.test.mjs tests/driverOnboardingMigration.test.mjs tests/vehicleFleetMigration.test.mjs tests/transportCoreMigration.test.mjs tests/transportStandardFareMigration.test.mjs tests/transportPaymentMigration.test.mjs tests/transportDriverOperationsMigration.test.mjs tests/transportNotificationsMigration.test.mjs tests/transportDepartureReschedulingMigration.test.mjs",
+    "test": "node --test tests/pricing.test.mjs tests/apiClient.test.mjs tests/platform.test.mjs tests/supabaseConfig.test.mjs tests/authAccess.test.mjs tests/driverSignupFlow.test.mjs tests/landingExperience.test.mjs tests/adminPeopleDirectoryMigration.test.mjs tests/adminSupportManagementMigration.test.mjs tests/driverOnboardingMigration.test.mjs tests/vehicleFleetMigration.test.mjs tests/transportCoreMigration.test.mjs tests/transportStandardFareMigration.test.mjs tests/transportPaymentMigration.test.mjs tests/transportDriverOperationsMigration.test.mjs tests/transportNotificationsMigration.test.mjs tests/transportDepartureReschedulingMigration.test.mjs tests/transportNotificationRealtimeMigration.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

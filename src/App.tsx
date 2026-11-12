@@ -27,9 +27,11 @@ import IdentityVerificationReview from './features/admin/IdentityVerificationRev
 import AdminDashboard from './features/admin/AdminDashboard'
 import FleetManagement, { DriverAssignedVehicle } from './features/admin/FleetManagement'
 import ScheduledDepartureManagement from './features/admin/ScheduledDepartureManagement'
+import AdminPeopleDirectory from './features/admin/AdminPeopleDirectory.tsx'
+import StaffAccessManagement from './features/admin/StaffAccessManagement.tsx'
 import DriverTransportWorkspace from './features/driver/DriverTransportWorkspace'
 import type { DriverSection } from './features/driver/DriverTransportWorkspace'
-import { canAccessWorkspacePath, getWorkspaceOptions, isAccountRestricted } from './features/auth/access.ts'
+import { canAccessWorkspacePath, isAccountRestricted } from './features/auth/access.ts'
 import { useAuth } from './features/auth/authContext.ts'
 import type { AuthSnapshot } from './services/auth.ts'
 import { addRouteStop, formatGhs, getJourneyFare, getRemainingSchedule, getRoutePricingStatus, removeRouteStop, reorderRouteStop } from './utils/pricing'
@@ -37,6 +39,7 @@ import { transportPaymentService } from './services/transportPayments.ts'
 import './index.css'
 
 type Workspace = 'Passenger' | 'Driver' | 'Admin'
+type AdminDepartment = 'operations' | 'support' | 'fleet' | 'finance' | 'insights'
 type WorkspaceRoute = { workspace: Workspace; section: string } | null
 type Booking = {
   id: string
@@ -107,10 +110,25 @@ const moreNavigation: Record<Workspace, { label: string; icon: ReactNode }[]> = 
     { label: 'Payments', icon: <CreditCard /> }, { label: 'Identity verification', icon: <FileCheck2 /> },
     { label: 'Reports & analytics', icon: <FileCheck2 /> },
     { label: 'Notifications', icon: <Bell /> }, { label: 'Platform settings', icon: <Settings /> },
+    { label: 'Staff & access', icon: <ShieldCheck /> },
   ],
 }
 
 const adminSections = ['Passengers', 'Drivers', 'Vehicles', 'Bookings', 'Payments'] as const
+const adminDepartmentLabels: Record<AdminDepartment, string> = {
+  operations: 'Operations',
+  support: 'People & support',
+  fleet: 'Fleet',
+  finance: 'Finance',
+  insights: 'Insights & access',
+}
+const adminDepartmentSections: Record<AdminDepartment, string[]> = {
+  operations: ['Overview', 'Bookings', 'Trips', 'Routes', 'Pickup points'],
+  support: ['Passengers', 'Drivers', 'Driver applications', 'Identity verification', 'Notifications'],
+  fleet: ['Vehicles'],
+  finance: ['Payments'],
+  insights: ['Reports & analytics', 'Platform settings', 'Staff & access'],
+}
 type AdminSection = (typeof adminSections)[number]
 const adminRowKeys: Record<AdminSection, keyof typeof adminPreviewRows> = {
   Passengers: 'passengers',
@@ -180,6 +198,7 @@ function App() {
   const [route, setDashboardRoute] = useState<WorkspaceRoute>(() => getWorkspaceRoute(window.location.pathname))
   const workspace = route?.workspace ?? null
   const section = route?.section ?? ''
+  const [adminDepartment, setAdminDepartment] = useState<AdminDepartment>('operations')
   const [moreOpen, setMoreOpen] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => localStorage.getItem('sureseat-theme') === 'dark' ? 'dark' : 'light')
   const [routes, setRoutes] = useState<Route[]>([])
@@ -256,6 +275,11 @@ function App() {
   const moreItems = moreNavigation[workspace ?? 'Passenger'].filter((item) => (
     authMode !== 'supabase' || !authSnapshot || canAccessWorkspacePath(sectionPath(workspace ?? 'Passenger', item.label), authSnapshot)
   ))
+  const allAdminItems = [...navItems, ...moreItems]
+  const isPlatformAdmin = authSnapshot?.roles.some((role) => role === 'administrator' || role === 'super_admin') ?? false
+  const visibleAdminItems = workspace === 'Admin' && isPlatformAdmin
+    ? allAdminItems.filter((item) => adminDepartmentSections[adminDepartment].includes(item.label))
+    : allAdminItems
   const adminDashboardAccess = useMemo(() => ({
     roles: authSnapshot?.roles ?? [],
     permissions: authSnapshot?.permissions ?? [],
@@ -266,23 +290,47 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (authMode !== 'supabase' || section !== 'Notifications') return
+    const recipientUserId = authSnapshot?.user.id
+    if (authMode !== 'supabase' || !recipientUserId) return
     let cancelled = false
+    let firstLoad = true
     async function loadNotifications() {
-      setNotificationsLoading(true)
-      setNotificationsError('')
+      if (firstLoad) setNotificationsLoading(true)
       try {
         const rows = await transportNotificationService.listMine()
-        if (!cancelled) setTransportNotifications(rows)
+        if (!cancelled) {
+          setTransportNotifications((current) => {
+            const existing = new Map(current.map((notification) => [notification.id, notification]))
+            for (const row of rows) existing.set(row.id, row)
+            return [...existing.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 50)
+          })
+          setNotificationsError('')
+        }
       } catch (error) {
         if (!cancelled) setNotificationsError(getErrorMessage(error, 'Notifications could not be loaded.'))
       } finally {
+        firstLoad = false
         if (!cancelled) setNotificationsLoading(false)
       }
     }
+    const unsubscribe = transportNotificationService.subscribeToMine(recipientUserId, (notification) => {
+      if (cancelled) return
+      setTransportNotifications((current) => [
+        notification,
+        ...current.filter((item) => item.id !== notification.id),
+      ].slice(0, 50))
+      setToast(`Trip update: ${notification.title}`)
+    })
     void loadNotifications()
-    return () => { cancelled = true }
-  }, [authMode, notificationsReloadKey, section])
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadNotifications()
+    }, 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+      unsubscribe()
+    }
+  }, [authMode, authSnapshot?.user.id, notificationsReloadKey])
 
   async function markTransportNotificationsRead() {
     setMarkingNotificationsRead(true)
@@ -482,9 +530,16 @@ function App() {
     setSearch('')
   }
 
+  function switchAdminDepartment(value: AdminDepartment) {
+    setAdminDepartment(value)
+    const nextSection = adminDepartmentSections[value].find((candidate) => allAdminItems.some((item) => item.label === candidate))
+    if (nextSection) navigate(nextSection)
+  }
+
   async function handleSignOut() {
     try {
       await signOut()
+      setTransportNotifications([])
       window.location.assign('/')
     } catch (error) {
       setToast(getErrorMessage(error, 'Could not sign out. Please try again.'))
@@ -929,6 +984,24 @@ function App() {
   }
 
   function renderAdmin() {
+    if (section === 'Passengers' || section === 'Drivers') {
+      if (authMode !== 'supabase') return <><PageTitle eyebrow="ADMIN · PEOPLE" title={`${section} directory`} detail="Account details are available when the authenticated database is connected." /><EmptyState icon={<UserRound />} title="Directory unavailable in preview" detail="No sample personal records are shown here." /></>
+      const isAdminRole = authSnapshot?.roles.some((role) => role === 'administrator' || role === 'super_admin') ?? false
+      const canSupportPeople = isAdminRole || authSnapshot?.permissions.includes('support.manage') === true
+      return <AdminPeopleDirectory
+        role={section === 'Drivers' ? 'driver' : 'passenger'}
+        onReviewDrivers={() => navigate('Driver applications')}
+        canEdit={canSupportPeople}
+        canResetPassword={canSupportPeople}
+        canReadIdentityDocuments={isAdminRole || authSnapshot?.permissions.includes('verification.review') === true}
+        canReadDriverDocuments={isAdminRole || authSnapshot?.permissions.includes('drivers.approve') === true}
+      />
+    }
+    if (section === 'Staff & access') {
+      return authMode === 'supabase'
+        ? <StaffAccessManagement />
+        : <><PageTitle eyebrow="ADMIN · ACCESS CONTROL" title="Staff & departments" detail="Staff invitations and permission management require authenticated Supabase mode." /><EmptyState icon={<ShieldCheck />} title="Access management unavailable in preview" detail="No sample staff accounts or invitations are shown." /></>
+    }
     if (section === 'Vehicles') {
       if (authMode === 'supabase' && authSnapshot
         && !canAccessWorkspacePath(sectionPath('Admin', 'Vehicles'), authSnapshot)) {
@@ -1058,24 +1131,26 @@ function App() {
     <div className={`app-shell ${workspace.toLowerCase()}-workspace`}>
       <aside className="sidebar">
         <a className="brand" href={sectionPath(workspace, workspace === 'Passenger' ? 'Home' : 'Overview')} onClick={(event) => { event.preventDefault(); navigate(workspace === 'Passenger' ? 'Home' : 'Overview') }}><span className="brand-mark">S</span><span>Sure<span className="brand-gold">Seat</span></span></a>
-        <div className="dashboard-label"><span>{workspace}</span><small>Dashboard</small></div>
-        <nav className="side-nav" aria-label={`${workspace} navigation`}>
-          {navItems.map((item) => <button key={item.label} className={`nav-link ${section === item.label ? 'active' : ''}`} aria-current={section === item.label ? 'page' : undefined} onClick={() => navigate(item.label)}><span className="nav-link-icon">{item.icon}</span><span>{item.label}</span>{item.label === 'Active Trip' && activeTripCount > 0 && <span className="nav-count">{activeTripCount}</span>}</button>)}
-          <button type="button" className={`nav-link more-toggle ${moreOpen || isMoreSection ? 'active' : ''}`} aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><span className="nav-link-icon"><MoreHorizontal /></span><span>More</span><ChevronDown className={moreOpen ? 'chevron-open' : ''} /></button>
-          {moreOpen && <div className="more-menu more-menu-desktop" aria-label="More navigation">{moreItems.map((item) => <button key={item.label} className={`nav-link ${section === item.label ? 'active' : ''}`} aria-current={section === item.label ? 'page' : undefined} onClick={() => navigate(item.label)}><span className="nav-link-icon">{item.icon}</span><span>{item.label}</span></button>)}</div>}
+        <div className="dashboard-label"><span>{workspace}</span><small>{workspace === 'Admin' && isPlatformAdmin ? adminDepartmentLabels[adminDepartment] : 'Dashboard'}</small></div>
+        <nav className={`side-nav ${workspace === 'Admin' ? 'admin-side-nav' : ''}`} aria-label={`${workspace} navigation`}>
+          {workspace === 'Admin'
+            ? visibleAdminItems.map((item) => <button key={item.label} className={`nav-link ${section === item.label ? 'active' : ''}`} aria-current={section === item.label ? 'page' : undefined} onClick={() => navigate(item.label)}><span className="nav-link-icon">{item.icon}</span><span>{item.label}</span></button>)
+            : <>{navItems.map((item) => <button key={item.label} className={`nav-link ${section === item.label ? 'active' : ''}`} aria-current={section === item.label ? 'page' : undefined} onClick={() => navigate(item.label)}><span className="nav-link-icon">{item.icon}</span><span>{item.label}</span>{item.label === 'Active Trip' && activeTripCount > 0 && <span className="nav-count">{activeTripCount}</span>}</button>)}
+              <button type="button" className={`nav-link more-toggle ${moreOpen || isMoreSection ? 'active' : ''}`} aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><span className="nav-link-icon"><MoreHorizontal /></span><span>More</span><ChevronDown className={moreOpen ? 'chevron-open' : ''} /></button>
+              {moreOpen && <div className="more-menu more-menu-desktop" aria-label="More navigation">{moreItems.map((item) => <button key={item.label} className={`nav-link ${section === item.label ? 'active' : ''}`} aria-current={section === item.label ? 'page' : undefined} onClick={() => navigate(item.label)}><span className="nav-link-icon">{item.icon}</span><span>{item.label}</span></button>)}</div>}</>}
         </nav>
         <div className="sidebar-footer"><div className="support-mini"><Headphones /><span><b>Need a hand?</b><small>We are here to help</small></span></div><span>SureSeat Ghana · {workspace} dashboard</span></div>
       </aside>
       <main className="main-column">
         <header className="topbar">
           <div className="mobile-brand"><span className="brand-mark">S</span><strong>Sure<span className="brand-gold">Seat</span></strong></div>
-          <div className="topbar-context"><span className="workspace-chip">{workspace} dashboard</span>{showPreviewData && <PreviewLabel />}</div>
+          <div className="topbar-context"><span className="workspace-chip">{workspace === 'Admin' && isPlatformAdmin ? `${adminDepartmentLabels[adminDepartment]} · Admin` : `${workspace} dashboard`}</span>{showPreviewData && <PreviewLabel />}</div>
           <div className="topbar-actions">
             <button className="icon-button theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon /> : <Sun />}</button>
             <button className="icon-button notification-toggle" aria-label="Open notifications" onClick={() => navigate(workspace === 'Passenger' ? 'Notifications' : workspace === 'Admin' ? 'Notifications' : 'Notifications')}><Bell />{(authMode === 'supabase' ? transportNotifications.some((item) => !item.readAt) : !readNotifications || endTripRequested) && <i />}</button>
             {authSnapshot && <div className="user-chip"><span className="avatar">{(authSnapshot.profile.full_name?.trim().charAt(0) || authSnapshot.user.email?.charAt(0) || 'S').toUpperCase()}</span><span>{authSnapshot.profile.full_name || authSnapshot.user.email || 'SureSeat account'}<small>{accountRestricted ? 'Verification required' : 'Signed in'}</small></span></div>}
             {!authSnapshot && <div className="user-chip"><span className="avatar">{workspace === 'Admin' ? 'A' : workspace === 'Driver' ? 'K' : 'C'}</span><span>{workspace === 'Admin' ? 'Admin' : workspace === 'Driver' ? 'Kwame Mensah' : 'Commuter'}<small>Preview account</small></span></div>}
-            {authSnapshot && getWorkspaceOptions(authSnapshot).length > 1 && <button className="icon-button" aria-label="Switch workspace" title="Switch workspace" onClick={() => window.location.assign('/workspace')}><LayoutDashboard /></button>}
+            {workspace === 'Admin' && isPlatformAdmin && <label className="admin-department-switcher"><span>Department</span><select aria-label="Switch admin department" value={adminDepartment} onChange={(event) => switchAdminDepartment(event.target.value as AdminDepartment)}>{Object.entries(adminDepartmentLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
             {authSnapshot && <button className="button button-secondary" type="button" onClick={() => void handleSignOut()}>Sign out</button>}
           </div>
         </header>
@@ -1155,8 +1230,13 @@ function PassengerHome({ navigate, booking, subscription, routes, showPreviewDat
 }
 
 function ProfileScreen({ toast, authSnapshot }: { toast: (message: string) => void; authSnapshot: AuthSnapshot | null }) {
-  const { submitIdentityVerification } = useAuth()
+  const { submitIdentityVerification, updateOwnProfile } = useAuth()
   const [identityDocument, setIdentityDocument] = useState<File | null>(null)
+  const [profileName, setProfileName] = useState(authSnapshot?.profile.full_name ?? '')
+  const [profilePhone, setProfilePhone] = useState(authSnapshot?.profile.phone ?? '')
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [profileSaved, setProfileSaved] = useState(false)
   const [identityUploadBusy, setIdentityUploadBusy] = useState(false)
   const [identityUploadError, setIdentityUploadError] = useState('')
   const [identityUploadMessage, setIdentityUploadMessage] = useState('')
@@ -1190,6 +1270,22 @@ function ProfileScreen({ toast, authSnapshot }: { toast: (message: string) => vo
       }
     }
 
+    async function saveProfile(event: FormEvent<HTMLFormElement>) {
+      event.preventDefault()
+      setProfileBusy(true)
+      setProfileError('')
+      setProfileSaved(false)
+      try {
+        await updateOwnProfile({ fullName: profileName, phone: profilePhone })
+        setProfileSaved(true)
+        toast('Your profile has been updated.')
+      } catch (error) {
+        setProfileError(getErrorMessage(error, 'Your profile could not be saved.'))
+      } finally {
+        setProfileBusy(false)
+      }
+    }
+
     return (
       <>
         <PageTitle eyebrow="PASSENGER · ACCOUNT" title="Profile & verification" detail="Review your account and identity verification status." />
@@ -1199,6 +1295,17 @@ function ProfileScreen({ toast, authSnapshot }: { toast: (message: string) => vo
             <div><h2>{authSnapshot.profile.full_name || 'Passenger account'}</h2><p className="muted">{authSnapshot.user.email}</p></div>
             <span className={`status-pill${restricted ? ' status-warning' : ''}`}>{restricted ? 'Restricted' : 'Account active'}</span>
           </div>
+          <form className="profile-edit-form" onSubmit={(event) => void saveProfile(event)}>
+            <h2>Contact details</h2>
+            <div className="form-grid">
+              <label className="field">Full name<input value={profileName} onChange={(event) => setProfileName(event.target.value)} maxLength={120} autoComplete="name" required /></label>
+              <label className="field">Phone number<input type="tel" value={profilePhone} onChange={(event) => setProfilePhone(event.target.value)} maxLength={30} autoComplete="tel" placeholder="Add a phone number" /></label>
+            </div>
+            <p className="muted">Email address: {authSnapshot.user.email || 'Unavailable'} · Contact support to change it.</p>
+            {profileError && <p className="auth-feedback auth-error" role="alert">{profileError}</p>}
+            {profileSaved && <p className="auth-feedback auth-success" role="status">Your name and contact details are saved.</p>}
+            <button className="button button-primary" type="submit" disabled={profileBusy}>{profileBusy ? 'Saving…' : 'Save contact details'}</button>
+          </form>
           <div className="profile-details">
             <div><small>PHONE NUMBER</small><strong>{authSnapshot.profile.phone || 'Not added'}</strong></div>
             <div><small>IDENTITY VERIFICATION</small><strong>{verificationLabel}</strong></div>

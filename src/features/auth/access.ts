@@ -24,7 +24,7 @@ const staffPermissionsByAdminPath: Record<string, readonly string[]> = {
   '/admin/overview': [],
   '/admin/bookings': ['bookings.read', 'bookings.manage'],
   '/admin/trips': ['bookings.read', 'routes.manage'],
-  '/admin/drivers': ['drivers.approve'],
+  '/admin/drivers': ['drivers.read', 'drivers.approve'],
   '/admin/driver-applications': ['drivers.approve'],
   '/admin/identity-verification': ['verification.review'],
   '/admin/vehicles': ['vehicles.manage'],
@@ -34,6 +34,7 @@ const staffPermissionsByAdminPath: Record<string, readonly string[]> = {
   '/admin/payments': ['subscriptions.read', 'subscriptions.manage'],
   '/admin/reports-analytics': ['reports.read'],
   '/admin/notifications': ['support.manage'],
+  '/admin/staff-access': [],
 }
 
 export function resolveAuthMode(value: string | undefined): 'preview' | 'supabase' | 'invalid' {
@@ -101,6 +102,7 @@ export function canAccessWorkspacePath(pathname: string, access: AccessContext):
 
   if (access.roles.includes('administrator') || access.roles.includes('super_admin')) return true
   if (!access.roles.includes('staff')) return false
+  if (pathname === '/admin/staff-access') return false
 
   const requiredPermissions = staffPermissionsByAdminPath[pathname]
   if (!requiredPermissions) return false
